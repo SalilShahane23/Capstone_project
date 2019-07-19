@@ -1,0 +1,305 @@
+---
+title: "Hate Crimes in the US (Capstone Project)"
+author: "Salil Shahane"
+date: "18/07/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+#### Executive Summary
+
+Hate crimes in the US has been a serious concern for a while. The most popular speculated reason for the hate crimes is 'Racism'. But when we look at the data, we can find out a different truth. In this project we try to look at different datasets ranging from the median income to gini index and the demographic distribution. We load the census data for the variables like total population, median income, unemployed population, white people,  white people below poverty line, median age and gender distribution. We need additional variables in our regression model like the gini index(income inequality index)which we load from the census fact finder website. Kaiser family foundation helps with the non-citizen data and the hate crime data is loaded from the FBI website. We are considering the year 2017 for non-census data and 2016 ACS-5 year data for census variables.
+
+```{r Loading_Libraries, message=FALSE, warning=FALSE, echo=FALSE}
+library(tidyverse)
+library(tidycensus)
+library(lubridate)
+library(sf)
+library(stargazer)
+library(ggplot2)
+library(readxl)
+library(tinytex)
+
+```
+
+
+
+```{r load_data, warning=FALSE,message=FALSE, results='hide',echo=FALSE}
+
+census_data_2016 <- load_variables(2016, "acs5")
+
+# Two additional variables are pct_male in the population and median_age of the population
+
+state_level_data <- get_acs(
+  geography = "state",
+  variables = c(total_pop= "B01003_001", median_income = "B06011_001",
+                pop_unemployed = "B27011_014", 
+                white_people = "B02001_002", below_poverty_line = "B17020_002",
+                pop_with_HS_degree = "B06009_003", 
+                white_pop_bpl = "B17020A_002", male="B01001_002", median_age = "B01002_001"),
+  geometry = TRUE,
+  shift_geo = TRUE
+)
+
+state_level_data <- state_level_data%>%
+  select(-moe)%>%
+  spread(variable, estimate)
+
+
+# Reading hate crime data from FBI website
+hate_crimes <- read_excel("Table_12_Agency_Hate_Crime_Reporting_by_State_2017.xls")
+hate_crimes<- hate_crimes[,-c(6,7,8)]
+hate_crimes<- hate_crimes%>% drop_na()
+
+#Data Transformation - making the first row as the column header
+colnames(hate_crimes) = hate_crimes[1, ]
+hate_crimes = hate_crimes[-1,]
+
+# Eliminating the first row (total population)
+hate_crime_data<- hate_crimes[-1,]
+
+#Renaming the state column for a join later  
+hate_crime_data<- hate_crime_data%>%
+  rename(NAME = `Participating state`)
+
+
+# Reading GINI Index data
+Gini_data<-read_csv("ACS_17_1YR_B19083_with_ann.csv")
+
+
+# Data Transformation
+colnames(Gini_data) = Gini_data[1, ]
+Gini_data = Gini_data[-1,]
+
+Gini_data<-
+  Gini_data%>%
+  rename(NAME= Geography)
+
+Gini_data$`Estimate; Gini Index` <-
+  as.numeric(as.character(Gini_data$`Estimate; Gini Index`))
+
+
+# Reading Kaiser data
+kaiser_data<- read_csv("kaiser_nonCitizen_data.csv")
+
+# Transforming Kaiser Data
+
+kaiser_data <-
+  kaiser_data%>%
+  rename(NAME = Location)
+
+# kaiser_data <- kaiser_data%>%
+#   select(-Total)
+
+  
+# joining state_level_data and hate crime data
+state_level_data<-
+  state_level_data%>%
+  left_join(hate_crime_data, by= "NAME")
+
+state_level_data <- state_level_data%>%
+  rename(reported_hate_crimes = `Total
+number of
+incidents
+reported`)
+
+state_level_data <- state_level_data%>%
+  rename(pop_covered = `Population
+covered`)
+
+state_level_data$reported_hate_crimes <- 
+  as.numeric(as.character(state_level_data$reported_hate_crimes))
+state_level_data$pop_covered <- 
+  as.numeric(as.character(state_level_data$pop_covered))
+
+# joining state_level_data and Kaiser Citizen Data
+
+state_level_data <- state_level_data%>%
+  left_join(kaiser_data, by = "NAME")
+
+
+state_level_data <- state_level_data%>%
+  mutate(pct_white_pop = white_people/total_pop)%>%
+  mutate(pct_unemployed = pop_unemployed/total_pop)%>%
+  mutate(pct_with_HS_degree= pop_with_HS_degree/total_pop)%>%
+  mutate(pct_non_white = (1-(white_people/total_pop)))%>%
+  mutate(pct_white_bpl = white_pop_bpl/total_pop)%>%
+  mutate(avg_hate_crimes_per_100k = (reported_hate_crimes*100000/pop_covered))%>%
+  mutate(pct_male = male/total_pop)
+
+# joining gini data
+state_level_data<-
+  state_level_data%>%
+  left_join(Gini_data, by = "NAME")
+
+# Changing the name of the gini index column
+state_level_data <- state_level_data%>%
+  rename(gini_index = `Estimate; Gini Index`)
+  
+
+
+```
+
+#### Background and Methodology
+We use multivariate regression to find the effect of different independent variables (regressors) on the depenedent variable which is the average number of hate crimes in the US.
+When we run the regression using the variables, we find that the most signinficant variable turns out to be people(especially white) below poverty line, which affects the average hate crime number in the US. We also find that people with HS degree, Non-white people, Non-US citizen, median age and percentage of male in the population negatively affects the average number of hate crimes. So unit increase in all these variable will decrease the average number of hate crimes according to the regressor coefficient. In this regression model we have also considered an interaction term between two variables: median income and white population below poverty line. This affects the regression coefficents and the change can be seen in column 3. 
+
+#### Analysis
+We use map and non-map plots to understand the data in a better way. According to the map we see different states have different number of average hate crimes. To normalise the data across all states we consider the crime rate per 100 thousand of the population. We also separately plot the average number of hate crimes and the percentage of white people below poverty line as it is one of the most significant variabel in the regression and see a similar tred wherein the percent white people below poverty line is negatively correlated to the average number of hate crimes. In another plot we show the change in average number of hate crime per 100 thousand over the years 2008 to 2017. The graph follows the trend of the underlying assumption that income inequality is one of the major cause of hate crimes in the US.
+
+\pagebreak
+
+### Regression model
+
+
+```{r reg_model, warning=FALSE, message=FALSE, results='asis', echo=FALSE}
+
+fit1 <- lm(avg_hate_crimes_per_100k ~ pct_unemployed + pct_with_HS_degree
+           + pct_non_white + pct_white_bpl+ median_income + `Non-Citizen`, data=state_level_data)
+
+fit2 <- lm(avg_hate_crimes_per_100k ~ pct_unemployed + pct_with_HS_degree
+           + pct_non_white + pct_white_bpl + median_income  +
+             `Non-Citizen` + pct_male + median_age, data= state_level_data)
+
+fit3 <- lm(avg_hate_crimes_per_100k ~ pct_unemployed +
+             pct_with_HS_degree + pct_non_white + pct_white_bpl*median_income
+           + `Non-Citizen` + pct_male + median_age + gini_index, data= state_level_data)
+
+stargazer(fit1,fit2,fit3, type= "latex")
+```
+
+
+### Including Maps and Plots
+
+
+```{r plot, echo=FALSE}
+state_level_data <- st_transform(state_level_data, 2163)
+
+#plot
+
+ggplot(state_level_data)+
+  geom_sf(
+    aes(fill=avg_hate_crimes_per_100k), color= NA,
+   
+  )+
+  theme_void()+
+  scale_fill_distiller(
+    name= "Average Hate crimes per 100k",
+    palette = "Reds",
+    #trans = "reverse",
+    limits = c(0,30),
+    breaks = seq(0,30,10),
+    labels = seq(0,30,10),
+    direction = 1
+  )+ 
+   theme(legend.title = element_text(colour="Red", size=10, 
+                                      face="bold"),plot.title = element_text(hjust = 0.5))+
+  theme(legend.position = "bottom")+
+  ggtitle("Hate Crimes in the US")+
+  labs(caption = "Source: ACS Data, FBI")
+  
+```
+
+
+\pagebreak
+
+#### Is % white population below poverty line one of the factors leading to Hate Crimes?
+
+
+```{r non_map_plot, echo=FALSE, results='hide', message=FALSE, warning=FALSE}
+
+ggplot(state_level_data)+
+  geom_smooth(aes(x=avg_hate_crimes_per_100k, y=pct_white_bpl))+
+  labs(
+    y= "% White Population below poverty line",
+    x="Average Hate Crimes (Per 100k population)"
+  )+
+  ggtitle("White BPL vs Hate Crimes")+
+  theme_bw()+
+  labs(
+    caption = "Source: ACS Data, Kaiser Family Foundation, FBI, Census FactFinder"
+  )
+
+```
+
+
+### Change in Hate crimes over time
+
+
+```{r plot1, echo=FALSE, results='hide', message=FALSE, warning=FALSE}
+
+# Reading the FBI hate crime data for years 2008 - 2017
+
+FBI_2008 <- read_excel("FBI_2008.xls")
+FBI_2009 <- read_excel("FBI_2009.xls")
+FBI_2010 <- read_excel("FBI_2010.xls")
+FBI_2011 <- read_excel("FBI_2011.xls")
+FBI_2012 <- read_excel("FBI_2012.xls")
+FBI_2013 <- read_excel("FBI_2013.xls")
+FBI_2014 <- read_excel("FBI_2014.xls")
+FBI_2015 <- read_excel("FBI_2015.xls")
+FBI_2016 <- read_excel("FBI_2016.xls")
+FBI_2017 <- read_excel("FBI_2017.xls")
+
+average_annual_hate_crime <- tibble()
+average_annual_hate_crime <- FBI_2008[3,5]%>% bind_rows(FBI_2009[3,5])%>%
+  bind_rows(FBI_2010[3,5])%>%
+   bind_rows(FBI_2011[3,5])%>%
+   bind_rows(FBI_2012[3,5])%>%
+   bind_rows(FBI_2013[3,5])%>%
+   bind_rows(FBI_2014[3,5])%>%
+   bind_rows(FBI_2015[3,5])%>%
+   bind_rows(FBI_2016[3,5])%>%
+   bind_rows(FBI_2017[3,5])
+
+average_annual_hate_crime <- average_annual_hate_crime%>%
+  mutate(year = c(2008:2017))
+  
+
+total_population_table_FBI <- FBI_2008[3,3]%>%
+      bind_rows(FBI_2009[3,3])%>%
+        bind_rows(FBI_2010[3,3])%>%
+        bind_rows(FBI_2011[3,3])%>%
+        bind_rows(FBI_2012[3,3])%>%
+        bind_rows(FBI_2013[3,3])%>%
+        bind_rows(FBI_2014[3,3])%>%
+        bind_rows(FBI_2015[3,3])%>%
+        bind_rows(FBI_2016[3,3])%>%
+        bind_rows(FBI_2017[3,3])
+      
+average_annual_hate_crime <- average_annual_hate_crime%>%
+  bind_cols(total_population_table_FBI)
+
+average_annual_hate_crime$...3 = as.numeric(as.character(average_annual_hate_crime$...3))
+average_annual_hate_crime$...5 = as.numeric(as.character(average_annual_hate_crime$...5))
+
+average_annual_hate_crime<-
+  average_annual_hate_crime%>%
+  mutate(avg_annual_hate_crime_per_100k = (...5/...3)*100000)
+    
+    
+
+ggplot(average_annual_hate_crime)+
+  geom_path(
+    aes(y= avg_annual_hate_crime_per_100k, x= year), color="blue", fill="average_annual_hate_crime$...5",
+    group =1, size =1.5
+  )+
+  labs(y= "Annual Hate Crimes in the US per 100k", x= "Year")+
+  ggtitle("Change in Hate Crime over the years (2008-2017)")+ 
+  scale_x_continuous(breaks = seq(2008,2017,1))+
+  theme_bw()+
+  labs(
+    caption = "Source: FBI, ACS Census Data"
+  )
+  
+```
+
+#### Conclusion
+
+Hate crimes in the US is  highly correlated with the income inequality. A sthe income inequality rises (Gini coefficient goes up) the number of hate crimes go up. In order to address this issue of Hate crimes, it is necessary that the income gap is bridged to a certain extent. Also, there are certain other variables like homelessness, religion, physical disability, public assistance to the state etc. whic are not considered in this model and hence could be included in further studies to get a more accurate regression model explaining the cause of Hate crimes.
+
